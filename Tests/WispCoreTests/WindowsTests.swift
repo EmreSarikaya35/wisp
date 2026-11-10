@@ -83,3 +83,11 @@ private func w(_ id: UInt32, pid: Int32 = 10, layer: Int = 0, size: CGSize = CGS
     let out = buildList(cg: input, ax: [:], ownPID: 0, scope: .currentSpace, alsoInclude: [2])
     #expect(out.map(\.id) == [1, 2])
 }
+
+@Test func dropsHelperWindowsAXDoesNotKnow() {
+    // Chrome in fullscreen puts an on-screen toolbar window above the real one; AX doesn't list it.
+    let input = [w(1, pid: 10), w(2, pid: 10), w(3, pid: 11)]
+    let ax: [UInt32: AXFacts] = [2: AXFacts(title: "Real", isMinimized: false)]
+    let out = buildList(cg: input, ax: ax, ownPID: 0, scope: .currentSpace, axAnswered: [10])
+    #expect(out.map(\.id) == [2, 3])  // pid 11 didn't answer AX (frozen/accessory): keep its windows
+}

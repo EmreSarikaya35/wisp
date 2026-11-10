@@ -19,13 +19,15 @@ struct Snapshot {
         let ownPID = getpid()
 
         var ax: [UInt32: AXFacts] = [:], elements: [UInt32: AXUIElement] = [:], icons: [Int32: NSImage] = [:]
-        var regular = Set<pid_t>()
+        var regular = Set<pid_t>(), axAnswered = Set<pid_t>()
         // shortcut: AX is queried app by app on the main thread; parallelize if Task 10 shows it misses 50 ms.
         for pid in Set(cg.lazy.filter { $0.layer == 0 && $0.pid != ownPID }.map(\.pid)) {
             guard let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular else { continue }
             icons[pid] = app.icon
             regular.insert(pid)
-            for el in axWindows(pid: pid) {
+            guard let windows = axWindows(pid: pid) else { continue }  // frozen app: keep its CG windows as-is
+            axAnswered.insert(pid)
+            for el in windows {
                 guard let id = Private.windowID(of: el) else { continue }
                 elements[id] = el
                 ax[id] = facts(el, hidden: app.isHidden)
@@ -54,7 +56,7 @@ struct Snapshot {
             }
             extra = extra.filter { ax[$0] != nil }  // only windows we can actually raise
         }
-        let windows = buildList(cg: cg, ax: ax, ownPID: ownPID, scope: scope, alsoInclude: extra)
+        let windows = buildList(cg: cg, ax: ax, ownPID: ownPID, scope: scope, alsoInclude: extra, axAnswered: axAnswered)
         for w in windows where icons[w.pid] == nil { icons[w.pid] = NSRunningApplication(processIdentifier: w.pid)?.icon }
         return Snapshot(windows: windows, elements: elements, icons: icons)
     }
@@ -64,9 +66,9 @@ struct Snapshot {
                 isMinimized: attribute(el, kAXMinimizedAttribute) as? Bool ?? false, isHidden: hidden)
     }
 
-    static func axWindows(pid: pid_t) -> [AXUIElement] {
-        let app = AXUIElementCreateApplication(pid)
-        return attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+    /// nil when the app didn't answer (frozen or timed out).
+    static func axWindows(pid: pid_t) -> [AXUIElement]? {
+        attribute(AXUIElementCreateApplication(pid), kAXWindowsAttribute) as? [AXUIElement]
     }
 
     static func attribute(_ el: AXUIElement, _ name: String) -> AnyObject? {

@@ -46,12 +46,14 @@ public struct AXFacts: Equatable, Sendable {
 
 /// Filters CG windows to real user windows and orders them: on-screen (z-order) first, then the rest.
 /// `alsoInclude`: off-screen windows that still count as the current desktop (see `onCurrentDesktop`).
+/// `axAnswered`: apps whose AX window list was read; their windows AX doesn't know are helpers (toolbars, overlays).
 public func buildList(cg: [WindowInfo], ax: [UInt32: AXFacts], ownPID: Int32, scope: Scope,
-                      alsoInclude: Set<UInt32> = []) -> [WindowInfo] {
+                      alsoInclude: Set<UInt32> = [], axAnswered: Set<Int32> = []) -> [WindowInfo] {
     var onScreen: [WindowInfo] = [], offScreen: [WindowInfo] = []
     for var w in cg {
         guard w.layer == 0, w.bounds.width >= 50, w.bounds.height >= 50, w.pid != ownPID else { continue }
         let facts = ax[w.id]
+        if facts == nil, axAnswered.contains(w.pid) { continue }
         let keep = switch scope {
         case .currentSpace: w.isOnScreen || facts?.isMinimized == true || facts?.isHidden == true
             || alsoInclude.contains(w.id)
