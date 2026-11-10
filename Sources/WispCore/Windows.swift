@@ -45,13 +45,16 @@ public struct AXFacts: Equatable, Sendable {
 }
 
 /// Filters CG windows to real user windows and orders them: on-screen (z-order) first, then the rest.
-public func buildList(cg: [WindowInfo], ax: [UInt32: AXFacts], ownPID: Int32, scope: Scope) -> [WindowInfo] {
+/// `alsoInclude`: off-screen windows that still count as the current desktop (see `onCurrentDesktop`).
+public func buildList(cg: [WindowInfo], ax: [UInt32: AXFacts], ownPID: Int32, scope: Scope,
+                      alsoInclude: Set<UInt32> = []) -> [WindowInfo] {
     var onScreen: [WindowInfo] = [], offScreen: [WindowInfo] = []
     for var w in cg {
         guard w.layer == 0, w.bounds.width >= 50, w.bounds.height >= 50, w.pid != ownPID else { continue }
         let facts = ax[w.id]
         let keep = switch scope {
         case .currentSpace: w.isOnScreen || facts?.isMinimized == true || facts?.isHidden == true
+            || alsoInclude.contains(w.id)
         case .allSpaces: w.isOnScreen || facts != nil
         }
         guard keep else { continue }
@@ -61,4 +64,13 @@ public func buildList(cg: [WindowInfo], ax: [UInt32: AXFacts], ownPID: Int32, sc
         if w.isOnScreen { onScreen.append(w) } else { offScreen.append(w) }
     }
     return onScreen + offScreen
+}
+
+/// A fullscreen app lives in its own Space, but to the user it is part of the desktop: fullscreen windows are
+/// always listed, and from inside a fullscreen app the desktop behind it is listed too.
+public func onCurrentDesktop(windowSpaces: Set<UInt64>, current: Set<UInt64>, fullscreen: Set<UInt64>) -> Bool {
+    guard !windowSpaces.isEmpty else { return false }
+    // shortcut: from a fullscreen app, windows of *every* normal desktop are listed; pick the last-used one if users with many desktops object.
+    return !windowSpaces.isDisjoint(with: current) || !windowSpaces.isDisjoint(with: fullscreen)
+        || !current.isDisjoint(with: fullscreen)
 }

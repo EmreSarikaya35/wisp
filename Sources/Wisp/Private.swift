@@ -8,6 +8,7 @@ enum Private {
     private typealias CreateRemoteFn = @convention(c) (CFData) -> Unmanaged<AXUIElement>?
     private typealias ConnectionFn = @convention(c) () -> Int32
     private typealias SpacesForWindowsFn = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    private typealias DisplaySpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
 
     private static func sym<T>(_ name: String, _: T.Type) -> T? {
         dlsym(UnsafeMutableRawPointer(bitPattern: -2), name).map { unsafeBitCast($0, to: T.self) }
@@ -16,6 +17,7 @@ enum Private {
     private static let createRemote = sym("_AXUIElementCreateWithRemoteToken", CreateRemoteFn.self)
     private static let connection = sym("CGSMainConnectionID", ConnectionFn.self)
     private static let spacesForWindows = sym("CGSCopySpacesForWindows", SpacesForWindowsFn.self)
+    private static let displaySpaces = sym("CGSCopyManagedDisplaySpaces", DisplaySpacesFn.self)
 
     static func windowID(of el: AXUIElement) -> CGWindowID? {
         var id: CGWindowID = 0
@@ -24,15 +26,30 @@ enum Private {
     }
 
     static var allSpacesAvailable: Bool {
-        getWindow != nil && createRemote != nil && connection != nil && spacesForWindows != nil
+        getWindow != nil && createRemote != nil && connection != nil && spacesForWindows != nil && displaySpaces != nil
     }
 
-    /// Real windows belong to a Space; the many invisible helper windows apps own do not.
-    static func isOnAnySpace(_ id: CGWindowID) -> Bool {
+    /// Spaces a window is on. Real windows belong to one; the many invisible helper windows apps own do not.
+    static func spaces(of id: CGWindowID) -> Set<UInt64> {
         guard let connection, let spacesForWindows,
               let spaces = spacesForWindows(connection(), 7 /* all spaces */, [id] as CFArray)?.takeRetainedValue()
-        else { return false }
-        return CFArrayGetCount(spaces) > 0
+        else { return [] }
+        return Set((spaces as? [NSNumber] ?? []).map(\.uint64Value))
+    }
+
+    /// The Space shown on each display, and every fullscreen-app Space (type ≠ 0, normal desktops are 0).
+    static func desktopSpaces() -> (current: Set<UInt64>, fullscreen: Set<UInt64>) {
+        guard let connection, let displaySpaces,
+              let displays = displaySpaces(connection())?.takeRetainedValue() as? [[String: Any]]
+        else { return ([], []) }
+        var current = Set<UInt64>(), fullscreen = Set<UInt64>()
+        for d in displays {
+            if let id = (d["Current Space"] as? [String: Any])?["id64"] as? NSNumber { current.insert(id.uint64Value) }
+            for s in d["Spaces"] as? [[String: Any]] ?? [] where (s["type"] as? NSNumber)?.intValue != 0 {
+                if let id = s["id64"] as? NSNumber { fullscreen.insert(id.uint64Value) }
+            }
+        }
+        return (current, fullscreen)
     }
 
     /// AX elements for windows on other Spaces, which kAXWindowsAttribute does not return.

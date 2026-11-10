@@ -66,3 +66,20 @@ private func w(_ id: UInt32, pid: Int32 = 10, layer: Int = 0, size: CGSize = CGS
     #expect(out.last?.isHidden == true)
     #expect(out.first?.isHidden == false)
 }
+
+@Test func fullscreenSpacesCountAsCurrentDesktop() {
+    let normal: Set<UInt64> = [1], other: Set<UInt64> = [2], full: Set<UInt64> = [9]
+    // On the normal desktop: fullscreen apps are listed, other normal desktops are not.
+    #expect(onCurrentDesktop(windowSpaces: full, current: normal, fullscreen: full))
+    #expect(!onCurrentDesktop(windowSpaces: other, current: normal, fullscreen: full))
+    // Inside a fullscreen app: the desktop behind it is listed too.
+    #expect(onCurrentDesktop(windowSpaces: normal, current: full, fullscreen: full))
+    // Helper windows that belong to no Space never count.
+    #expect(!onCurrentDesktop(windowSpaces: [], current: full, fullscreen: full))
+}
+
+@Test func extraWindowsKeptInCurrentSpace() {
+    let input = [w(1), w(2, onScreen: false), w(3, onScreen: false)]
+    let out = buildList(cg: input, ax: [:], ownPID: 0, scope: .currentSpace, alsoInclude: [2])
+    #expect(out.map(\.id) == [1, 2])
+}

@@ -31,11 +31,20 @@ struct Snapshot {
                 ax[id] = facts(el, hidden: app.isHidden)
             }
         }
-        if scope == .allSpaces, Private.allSpacesAvailable {
+        // Windows on other Spaces: all of them in allSpaces mode; fullscreen apps (and, from inside one, the
+        // desktop behind it) in currentSpace mode.
+        var extra = Set<UInt32>()
+        if Private.allSpacesAvailable {
+            let layout = Private.desktopSpaces()
             var wanted: [pid_t: Set<UInt32>] = [:]
             for w in cg where !w.isOnScreen && w.layer == 0 && w.bounds.width >= 50 && w.bounds.height >= 50
-                && ax[w.id] == nil && regular.contains(w.pid) && Private.isOnAnySpace(w.id) {
-                wanted[w.pid, default: []].insert(w.id)
+                && regular.contains(w.pid) {
+                let spaces = Private.spaces(of: w.id)
+                guard scope == .allSpaces ? !spaces.isEmpty
+                    : onCurrentDesktop(windowSpaces: spaces, current: layout.current, fullscreen: layout.fullscreen)
+                else { continue }
+                extra.insert(w.id)
+                if ax[w.id] == nil { wanted[w.pid, default: []].insert(w.id) }
             }
             for (pid, ids) in wanted {
                 for (id, el) in Private.remoteWindowElements(pid: pid, wanted: ids) {
@@ -43,8 +52,9 @@ struct Snapshot {
                     ax[id] = facts(el, hidden: NSRunningApplication(processIdentifier: pid)?.isHidden ?? false)
                 }
             }
+            extra = extra.filter { ax[$0] != nil }  // only windows we can actually raise
         }
-        let windows = buildList(cg: cg, ax: ax, ownPID: ownPID, scope: scope)
+        let windows = buildList(cg: cg, ax: ax, ownPID: ownPID, scope: scope, alsoInclude: extra)
         for w in windows where icons[w.pid] == nil { icons[w.pid] = NSRunningApplication(processIdentifier: w.pid)?.icon }
         return Snapshot(windows: windows, elements: elements, icons: icons)
     }
