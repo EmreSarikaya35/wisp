@@ -91,3 +91,18 @@ private func w(_ id: UInt32, pid: Int32 = 10, layer: Int = 0, size: CGSize = CGS
     let out = buildList(cg: input, ax: ax, ownPID: 0, scope: .currentSpace, axAnswered: [10])
     #expect(out.map(\.id) == [2, 3])  // pid 11 didn't answer AX (frozen/accessory): keep its windows
 }
+
+@Test func otherSpaceWindowsFollowAppRecency() {
+    // Desktop: Claude (front), Safari, Discord. Fullscreen Chrome (pid 4) was used just before Claude.
+    let input = [w(1, pid: 1), w(2, pid: 2), w(3, pid: 3), w(4, pid: 4, onScreen: false), w(5, pid: 5, onScreen: false)]
+    let ax: [UInt32: AXFacts] = [5: AXFacts(title: nil, isMinimized: true)]
+    let out = buildList(cg: input, ax: ax, ownPID: 0, scope: .currentSpace, alsoInclude: [4], appRecency: [1, 4, 2])
+    #expect(out.map(\.id) == [1, 4, 2, 3, 5])  // Chrome right after Claude; minimized stays last
+}
+
+@Test func fromFullscreenDesktopWindowsFollowAppRecency() {
+    // Inside fullscreen Chrome (pid 4): only it is on screen; desktop windows come by recency.
+    let input = [w(4, pid: 4), w(3, pid: 3, onScreen: false), w(1, pid: 1, onScreen: false), w(2, pid: 2, onScreen: false)]
+    let out = buildList(cg: input, ax: [:], ownPID: 0, scope: .currentSpace, alsoInclude: [1, 2, 3], appRecency: [4, 1, 3])
+    #expect(out.map(\.id) == [4, 1, 3, 2])  // unknown recency (pid 2) last
+}

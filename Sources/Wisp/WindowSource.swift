@@ -9,6 +9,24 @@ struct Snapshot {
 }
 
 @MainActor enum WindowSource {
+    /// Apps, most recently activated first. Fed by app-switch notifications only, so it costs nothing while idle.
+    private static var appRecency: [pid_t] = []
+
+    static func trackAppRecency() {
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier { appRecency = [pid] }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { note in
+            guard let pid = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+            else { return }
+            MainActor.assumeIsolated {
+                appRecency.removeAll { $0 == pid }
+                appRecency.insert(pid, at: 0)
+                if appRecency.count > 64 { appRecency.removeLast() }
+            }
+        }
+    }
+
     static func snapshot(scope: Scope) -> Snapshot {
         // .optionAll is not in z-order; only .optionOnScreenOnly is, so on-screen order comes from there.
         func list(_ o: CGWindowListOption) -> [WindowInfo] {
@@ -56,7 +74,8 @@ struct Snapshot {
             }
             extra = extra.filter { ax[$0] != nil }  // only windows we can actually raise
         }
-        let windows = buildList(cg: cg, ax: ax, ownPID: ownPID, scope: scope, alsoInclude: extra, axAnswered: axAnswered)
+        let windows = buildList(cg: cg, ax: ax, ownPID: ownPID, scope: scope, alsoInclude: extra, axAnswered: axAnswered,
+                                appRecency: appRecency)
         for w in windows where icons[w.pid] == nil { icons[w.pid] = NSRunningApplication(processIdentifier: w.pid)?.icon }
         return Snapshot(windows: windows, elements: elements, icons: icons)
     }

@@ -48,7 +48,8 @@ public struct AXFacts: Equatable, Sendable {
 /// `alsoInclude`: off-screen windows that still count as the current desktop (see `onCurrentDesktop`).
 /// `axAnswered`: apps whose AX window list was read; their windows AX doesn't know are helpers (toolbars, overlays).
 public func buildList(cg: [WindowInfo], ax: [UInt32: AXFacts], ownPID: Int32, scope: Scope,
-                      alsoInclude: Set<UInt32> = [], axAnswered: Set<Int32> = []) -> [WindowInfo] {
+                      alsoInclude: Set<UInt32> = [], axAnswered: Set<Int32> = [],
+                      appRecency: [Int32] = []) -> [WindowInfo] {
     var onScreen: [WindowInfo] = [], offScreen: [WindowInfo] = []
     for var w in cg {
         guard w.layer == 0, w.bounds.width >= 50, w.bounds.height >= 50, w.pid != ownPID else { continue }
@@ -65,7 +66,19 @@ public func buildList(cg: [WindowInfo], ax: [UInt32: AXFacts], ownPID: Int32, sc
         if w.title.isEmpty { w.title = facts?.title.flatMap { $0.isEmpty ? nil : $0 } ?? w.appName }
         if w.isOnScreen { onScreen.append(w) } else { offScreen.append(w) }
     }
-    return onScreen + offScreen
+    // Windows on other Spaces have no z-order with the visible ones, so place them by app recency (most recent
+    // first): each goes before the first visible window of a less recently used app. Minimized/hidden stay last.
+    let rank = Dictionary(appRecency.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+    func r(_ w: WindowInfo) -> Int { rank[w.pid] ?? Int.max }
+    let tail = offScreen.filter { $0.isMinimized || $0.isHidden }
+    var result = onScreen
+    for e in offScreen.filter({ !$0.isMinimized && !$0.isHidden }).enumerated().sorted(by: {
+        (r($0.element), $0.offset) < (r($1.element), $1.offset)
+    }).map(\.element) {
+        let i = r(e) == Int.max ? nil : result.firstIndex { r($0) > r(e) }
+        result.insert(e, at: i ?? result.count)
+    }
+    return result + tail
 }
 
 /// A fullscreen app lives in its own Space, but to the user it is part of the desktop: fullscreen windows are

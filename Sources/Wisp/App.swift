@@ -27,6 +27,7 @@ enum Permissions {
     private var installedShortcut: Shortcut?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        WindowSource.trackAppRecency()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "Wisp")
         let menu = NSMenu()
