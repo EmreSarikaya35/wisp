@@ -5,7 +5,7 @@ Wisp brings Windows-style **Alt+Tab** to the Mac. Unlike macOS's built-in Cmd+Ta
 It is built to stay out of your way:
 
 - **0% CPU when idle.** Nothing polls in the background; Wisp only wakes up when you press the shortcut.
-- **~12 MB of memory**, a ~200 KB download, and no dependencies. Native Swift + AppKit (no Electron, no SwiftUI).
+- **~12 MB of memory**, a tiny download, and no dependencies. Native Swift + AppKit (no Electron, no SwiftUI).
 - The window list, previews and keyboard listener exist only while the switcher is open, and are released when it closes.
 
 **[⬇ Download the latest release](https://github.com/EmreSarikaya35/wisp/releases/latest)** · macOS 14 Sonoma or later · Apple Silicon and Intel
@@ -45,7 +45,7 @@ Settings live in the menu bar icon (⧉) → **Settings…**:
 
 ## Install
 
-1. Download `Wisp.zip` from [Releases](https://github.com/EmreSarikaya35/wisp/releases/latest), unzip it, and move **Wisp.app** to **Applications**.
+1. Download `Wisp.dmg` from [Releases](https://github.com/EmreSarikaya35/wisp/releases/latest), open it, and drag **Wisp** to **Applications**.
 2. Open it. Wisp isn't notarized by Apple, so the first launch is blocked. To allow it, do one of these:
    - Open **System Settings → Privacy & Security** and click **Open Anyway** next to Wisp.
    - Or run: `xattr -dr com.apple.quarantine /Applications/Wisp.app`
@@ -75,7 +75,7 @@ Requires Xcode 16 or later.
 git clone https://github.com/EmreSarikaya35/wisp.git
 cd wisp
 swift test        # unit tests
-./build.sh        # builds build/Wisp.app and build/Wisp.zip (universal)
+./build.sh        # builds build/Wisp.app and build/Wisp.dmg (universal)
 open build/Wisp.app
 ```
 
