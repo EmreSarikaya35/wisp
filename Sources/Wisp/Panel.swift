@@ -7,46 +7,89 @@ private final class SwitcherPanel: NSPanel {
 }
 
 private final class ItemView: NSView {
-    let index: Int
-    let imageView = NSImageView()
-    let label = NSTextField(labelWithString: "")
-    let thumbView = NSImageView()
-    var thumbArea: NSRect = .zero
+    private var thumbView: NSImageView?
+    private var thumbArea: NSRect = .zero
 
-    init(index: Int, frame: NSRect) {
-        self.index = index
+    init(frame: NSRect, window: WindowInfo, icon: NSImage?, mode: Mode, scale: CGFloat) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = 8
+        let imageView = NSImageView()
+        let label = NSTextField(labelWithString: "")
+        imageView.image = icon
         imageView.imageScaling = .scaleProportionallyUpOrDown
-        thumbView.imageScaling = .scaleProportionallyUpOrDown
-        label.font = .systemFont(ofSize: 11)
-        label.alignment = .center
+        label.font = .systemFont(ofSize: max(9, 11 * scale))
         label.lineBreakMode = .byTruncatingTail
-        label.textColor = .labelColor
+        label.stringValue = window.title
+        toolTip = window.title
+        alphaValue = window.isMinimized || window.isHidden ? 0.5 : 1
         addSubview(imageView)
         addSubview(label)
+
+        let w = frame.width, h = frame.height, k = scale
+        switch mode {
+        case .preview:
+            thumbArea = NSRect(x: 8 * k, y: 32 * k, width: 220 * k, height: 140 * k)
+            let thumbView = NSImageView()
+            thumbView.imageScaling = .scaleProportionallyUpOrDown
+            thumbView.frame = thumbArea.insetBy(dx: 86 * k, dy: 46 * k)
+            thumbView.image = icon
+            addSubview(thumbView)
+            self.thumbView = thumbView
+            imageView.frame = NSRect(x: 8 * k, y: 8 * k, width: 16 * k, height: 16 * k)
+            label.frame = NSRect(x: 28 * k, y: 6 * k, width: w - 36 * k, height: 18 * k)
+        case .icons:
+            let side = 64 * k
+            imageView.frame = NSRect(x: (w - side) / 2, y: h - side - 6 * k, width: side, height: side)
+            label.frame = NSRect(x: 4 * k, y: 4 * k, width: w - 8 * k, height: 18 * k)
+            label.alignment = .center
+        case .list:
+            let side = 26 * k
+            let textX = 46 * k
+            let textWidth = max(0, w - textX - 10 * k)
+            imageView.frame = NSRect(x: 10 * k, y: (h - side) / 2, width: side, height: side)
+            label.font = .systemFont(ofSize: 13, weight: .medium)
+            if window.appName.isEmpty || window.title == window.appName {
+                label.frame = NSRect(x: textX, y: (h - 17 * k) / 2, width: textWidth, height: 17 * k)
+            } else {
+                label.frame = NSRect(x: textX, y: 21 * k, width: textWidth, height: 17 * k)
+                let appLabel = NSTextField(labelWithString: window.appName)
+                appLabel.font = .systemFont(ofSize: 11)
+                appLabel.textColor = .secondaryLabelColor
+                appLabel.lineBreakMode = .byTruncatingTail
+                appLabel.frame = NSRect(x: textX, y: 6 * k, width: textWidth, height: 14 * k)
+                addSubview(appLabel)
+            }
+        }
     }
+
     required init?(coder: NSCoder) { fatalError() }
 
     var isSelected = false {
-        didSet { layer?.backgroundColor = isSelected ? NSColor.controlAccentColor.withAlphaComponent(0.3).cgColor : nil }
+        didSet { layer?.backgroundColor = isSelected ? NSColor.controlAccentColor.withAlphaComponent(0.34).cgColor : nil }
+    }
+
+    func setThumbnail(_ image: CGImage) {
+        guard let thumbView else { return }
+        thumbView.frame = thumbArea
+        thumbView.image = NSImage(cgImage: image, size: .zero)
     }
 }
 
-/// One reusable floating panel; holds item views only while shown.
+/// One reusable panel. Views, icons and previews are retained only for the visible page.
 @MainActor final class Panel {
     var onHover: ((Int) -> Void)?
     var onClick: ((Int) -> Void)?
 
     private let panel: SwitcherPanel
     private let content: PanelContentView
+    private let footer = NSTextField(labelWithString: "")
     private var items: [ItemView] = []
-
-    static let padding: CGFloat = 16, spacing: CGFloat = 8
-    static let iconItem = CGSize(width: 96, height: 96)
-    static let previewItem = CGSize(width: 236, height: 180)  // 220×140 thumbnail + title row
-    private(set) var thumbnailSize: CGSize = .zero
+    private var windows: [WindowInfo] = []
+    private var mode: Mode = .icons
+    private var layout: SwitcherLayout?
+    private var page: Range<Int> = 0..<0
+    private var selected: Int?
 
     init() {
         panel = SwitcherPanel(contentRect: .zero, styleMask: [.nonactivatingPanel, .borderless],
@@ -61,71 +104,89 @@ private final class ItemView: NSView {
         content = PanelContentView()
         panel.contentView = content
         content.panel = self
+        footer.alignment = .center
+        footer.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        footer.textColor = .secondaryLabelColor
+        footer.isHidden = true
+        content.addSubview(footer)
     }
 
-    func show(items windows: [WindowInfo], icons: [Int32: NSImage], mode: Mode, selected: Int, on screen: NSScreen) {
-        let maxSize = NSSize(width: screen.visibleFrame.width * 0.9 - 2 * Self.padding,
-                             height: screen.visibleFrame.height * 0.9 - 2 * Self.padding)
-        let item = mode == .preview ? Self.previewItem : Self.iconItem
-        let grid = gridLayout(count: windows.count, item: item, spacing: Self.spacing, maxSize: maxSize)
-        let w = item.width * grid.scale, h = item.height * grid.scale
-        let size = NSSize(width: CGFloat(grid.columns) * (w + Self.spacing) - Self.spacing + 2 * Self.padding,
-                          height: CGFloat(grid.rows) * (h + Self.spacing) - Self.spacing + 2 * Self.padding)
-        content.setFrameSize(size)
-
-        let k = grid.scale
-        thumbnailSize = CGSize(width: 220 * k, height: 140 * k)
-        for (i, win) in windows.enumerated() {
-            let col = i % grid.columns, row = i / grid.columns
-            let frame = NSRect(x: Self.padding + CGFloat(col) * (w + Self.spacing),
-                               y: size.height - Self.padding - CGFloat(row + 1) * h - CGFloat(row) * Self.spacing,
-                               width: w, height: h)
-            let v = ItemView(index: i, frame: frame)
-            if mode == .preview {
-                v.thumbArea = NSRect(x: 8 * k, y: 32 * k, width: 220 * k, height: 140 * k)
-                v.thumbView.frame = v.thumbArea.insetBy(dx: (220 - 48) / 2 * k, dy: (140 - 48) / 2 * k)
-                v.thumbView.image = icons[win.pid]  // placeholder until the screenshot arrives
-                v.addSubview(v.thumbView)
-                v.imageView.frame = NSRect(x: 8 * k, y: 8 * k, width: 16 * k, height: 16 * k)
-                v.label.frame = NSRect(x: 28 * k, y: 8 * k, width: w - 36 * k, height: 16 * k)
-                v.label.alignment = .left
-            } else {
-                let icon = 64 * k
-                v.imageView.frame = NSRect(x: (w - icon) / 2, y: h - icon - 6, width: icon, height: icon)
-                v.label.frame = NSRect(x: 4, y: 4, width: w - 8, height: 16)
-            }
-            v.imageView.image = icons[win.pid]
-            v.label.stringValue = win.title
-            v.toolTip = win.title
-            v.alphaValue = win.isMinimized || win.isHidden ? 0.5 : 1
-            content.addSubview(v)
-            items.append(v)
-        }
-        select(selected)
-
+    func show(windows: [WindowInfo], mode: Mode, layout: SwitcherLayout, selected: Int, on screen: NSScreen) {
+        self.windows = windows
+        self.mode = mode
+        self.layout = layout
+        let rows = (min(windows.count, layout.pageSize) - 1) / layout.columns + 1
+        let width = CGFloat(layout.columns) * (layout.itemSize.width + SwitcherLayout.spacing) - SwitcherLayout.spacing
+        let height = CGFloat(rows) * (layout.itemSize.height + SwitcherLayout.spacing) - SwitcherLayout.spacing
+        let size = NSSize(width: width + 2 * SwitcherLayout.padding, height: height + 2 * SwitcherLayout.padding)
         let f = screen.visibleFrame
         panel.setFrame(NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2,
                               width: size.width, height: size.height), display: false)
+        content.setFrameSize(size)
+        footer.frame = NSRect(x: 0, y: 2, width: size.width, height: 12)
+        footer.isHidden = layout.pageCount <= 1
+        select(selected)
         content.mouseOrigin = NSEvent.mouseLocation
         panel.orderFrontRegardless()
     }
 
-    func select(_ i: Int) { for v in items { v.isSelected = v.index == i } }
+    @discardableResult
+    func select(_ index: Int) -> Bool {
+        guard let layout, windows.indices.contains(index), selected != index else { return false }
+        let newPage = layout.page(containing: index)
+        let pageChanged = page != newPage
+        if pageChanged {
+            page = newPage
+            buildPage(layout)
+        } else if let selected {
+            items[selected - page.lowerBound].isSelected = false
+        }
+        items[index - page.lowerBound].isSelected = true
+        selected = index
+        return pageChanged
+    }
 
-    func setThumbnail(_ img: CGImage, at i: Int) {
-        guard items.indices.contains(i) else { return }
-        let v = items[i]
-        v.thumbView.frame = v.thumbArea
-        v.thumbView.image = NSImage(cgImage: img, size: .zero)
+    private func buildPage(_ layout: SwitcherLayout) {
+        clearPage()
+        let w = layout.itemSize.width, h = layout.itemSize.height
+        let spacing = SwitcherLayout.spacing, padding = SwitcherLayout.padding
+        var icons: [Int32: NSImage] = [:]
+        for (offset, index) in page.enumerated() {
+            let window = windows[index]
+            if icons[window.pid] == nil { icons[window.pid] = NSRunningApplication(processIdentifier: window.pid)?.icon }
+            let col = offset % layout.columns, row = offset / layout.columns
+            let frame = NSRect(x: padding + CGFloat(col) * (w + spacing),
+                               y: content.bounds.height - padding - h - CGFloat(row) * (h + spacing),
+                               width: w, height: h)
+            let view = ItemView(frame: frame, window: window, icon: icons[window.pid] ?? NSImage(named: NSImage.applicationIconName),
+                                mode: mode, scale: layout.scale)
+            content.addSubview(view)
+            items.append(view)
+        }
+        if layout.pageCount > 1 { footer.stringValue = "\(page.lowerBound / layout.pageSize + 1) / \(layout.pageCount)" }
+    }
+
+    func setThumbnail(_ image: CGImage, at index: Int) {
+        if page.contains(index) { items[index - page.lowerBound].setThumbnail(image) }
     }
 
     func hide() {
         panel.orderOut(nil)
-        items.forEach { $0.removeFromSuperview() }
-        items = []
+        clearPage()
+        page = 0..<0
+        selected = nil
+        windows = []
+        layout = nil
     }
 
-    fileprivate func index(at point: NSPoint) -> Int? { items.first { $0.frame.contains(point) }?.index }
+    private func clearPage() {
+        items.forEach { $0.removeFromSuperview() }
+        items.removeAll()
+    }
+
+    fileprivate func index(at point: NSPoint) -> Int? {
+        items.firstIndex { $0.frame.contains(point) }.map { page.lowerBound + $0 }
+    }
 }
 
 private final class PanelContentView: NSVisualEffectView {
@@ -142,24 +203,29 @@ private final class PanelContentView: NSVisualEffectView {
         layer?.cornerRadius = 14
         layer?.masksToBounds = true
     }
+
     required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func updateTrackingAreas() {
         if let tracking { removeTrackingArea(tracking) }
-        let t = NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self)
-        addTrackingArea(t)
-        tracking = t
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
         super.updateTrackingAreas()
     }
 
     override func mouseMoved(with event: NSEvent) {
-        // Ignore the synthetic "move" when the panel appears under a still cursor.
+        // Ignore the synthetic move when the panel appears under a stationary cursor.
         guard NSEvent.mouseLocation != mouseOrigin else { return }
         mouseOrigin = NSEvent.mouseLocation
-        if let i = panel?.index(at: convert(event.locationInWindow, from: nil)) { panel?.onHover?(i) }
+        if let index = panel?.index(at: convert(event.locationInWindow, from: nil)) { panel?.onHover?(index) }
     }
 
     override func mouseDown(with event: NSEvent) {
-        if let i = panel?.index(at: convert(event.locationInWindow, from: nil)) { panel?.onClick?(i) }
+        if let index = panel?.index(at: convert(event.locationInWindow, from: nil)) { panel?.onClick?(index) }
     }
 }

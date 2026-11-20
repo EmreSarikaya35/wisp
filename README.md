@@ -4,16 +4,16 @@ Wisp brings Windows-style **Alt+Tab** to the Mac. Unlike macOS's built-in Cmd+Ta
 
 It is built to stay out of your way:
 
-- **0% CPU when idle.** Nothing polls in the background; Wisp only wakes up when you press the shortcut.
-- **~12 MB of memory**, a tiny download, and no dependencies. Native Swift + AppKit (no Electron, no SwiftUI).
-- The window list, previews and keyboard listener exist only while the switcher is open, and are released when it closes.
+- **No idle polling.** The default shortcut is registered with macOS. Window discovery runs on demand, away from the keyboard event handler.
+- A tiny download and no dependencies. Built with native Swift and AppKit.
+- Icons, views and previews are loaded only for the displayed page. Wisp releases them when the switcher closes.
 
 **[⬇ Download the latest release](https://github.com/EmreSarikaya35/wisp/releases/latest)** · macOS 14 Sonoma or later · Apple Silicon and Intel
 
 ## Features
 
 - **Every window is its own entry**, ordered by most recently used, just like Windows.
-- **Two looks:** window previews (thumbnails) or app icons only.
+- **Three layouts:** window previews, app icons, or a compact list with window titles and app names. The compact list runs without Screen Recording permission.
 - **Option+Tab** by default, or take over **Cmd+Tab** and replace the macOS app switcher.
 - **Quick tap** (press and release fast) jumps to the previous window without showing the panel.
 - **Minimized and hidden windows** are listed at the end, dimmed, and restored when you pick them.
@@ -26,7 +26,8 @@ It is built to stay out of your way:
 | Keys | Action |
 |---|---|
 | Hold **Option**, press **Tab** | Open the switcher; the previous window is selected |
-| **Tab** / **Shift+Tab**, **←** / **→** | Move the selection |
+| **Tab** / **Shift+Tab**, **←** / **→** | Move to the next or previous window |
+| **↑** / **↓** | Move between rows or through the compact list |
 | Release **Option**, or **Return**, or click | Switch to the selected window |
 | **Esc** | Cancel |
 | Quick **Option+Tab** tap | Switch to the previous window right away |
@@ -39,7 +40,7 @@ Settings live in the menu bar icon (⧉) → **Settings…**:
 | Setting | Options |
 |---|---|
 | Shortcut | Option+Tab (default) · Cmd+Tab |
-| Show | Window previews (default) · App icons only |
+| Show | Window previews (default) · App icons only · Compact list |
 | Windows from | Current desktop (default) · All desktops |
 | Launch at login | Off (default) |
 
@@ -56,7 +57,7 @@ Settings live in the menu bar icon (⧉) → **Settings…**:
 | Permission | Why | Required |
 |---|---|---|
 | Accessibility | To raise a specific window and to read the shortcut keys | Yes |
-| Screen Recording | Only for window previews. Without it Wisp shows app icons. | No |
+| Screen Recording | Enables window previews. The previews setting falls back to app icons while permission is unavailable. | No |
 
 Wisp makes no network connections and collects nothing.
 
@@ -64,6 +65,7 @@ Wisp makes no network connections and collects nothing.
 
 - The shortcut doesn't work while a password field is focused. macOS blocks keyboard listeners in secure input.
 - **All desktops** mode relies on private macOS APIs. If a future macOS version breaks it, the option is disabled and the default mode keeps working.
+- In **Current desktop** mode, fullscreen windows remain available. From a fullscreen Space, Wisp also lists windows from the last normal desktop it saw on that display, or the first desktop if it started in fullscreen.
 - To jump to a window on another desktop, enable System Settings → Desktop & Dock → *"When switching to an application, switch to a Space with open windows for the application"*.
 - Release builds are ad-hoc signed. macOS may ask for Accessibility again after you update Wisp.
 

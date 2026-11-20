@@ -1,6 +1,7 @@
 import ApplicationServices
 import Darwin
 import Foundation
+import WispCore
 
 /// Private symbols, resolved at runtime so a missing one disables a feature instead of crashing.
 enum Private {
@@ -21,9 +22,11 @@ enum Private {
 
     static func windowID(of el: AXUIElement) -> CGWindowID? {
         var id: CGWindowID = 0
-        guard let getWindow, getWindow(el, &id) == .success else { return nil }
+        guard let getWindow, getWindow(el, &id) == .success, id != kCGNullWindowID else { return nil }
         return id
     }
+
+    static var windowIDsAvailable: Bool { getWindow != nil }
 
     static var allSpacesAvailable: Bool {
         getWindow != nil && createRemote != nil && connection != nil && spacesForWindows != nil && displaySpaces != nil
@@ -37,19 +40,22 @@ enum Private {
         return Set((spaces as? [NSNumber] ?? []).map(\.uint64Value))
     }
 
-    /// The Space shown on each display, and every fullscreen-app Space (type ≠ 0, normal desktops are 0).
-    static func desktopSpaces() -> (current: Set<UInt64>, fullscreen: Set<UInt64>) {
+    static func desktopSpaces() -> [DisplaySpaces] {
         guard let connection, let displaySpaces,
               let displays = displaySpaces(connection())?.takeRetainedValue() as? [[String: Any]]
-        else { return ([], []) }
-        var current = Set<UInt64>(), fullscreen = Set<UInt64>()
-        for d in displays {
-            if let id = (d["Current Space"] as? [String: Any])?["id64"] as? NSNumber { current.insert(id.uint64Value) }
-            for s in d["Spaces"] as? [[String: Any]] ?? [] where (s["type"] as? NSNumber)?.intValue != 0 {
-                if let id = s["id64"] as? NSNumber { fullscreen.insert(id.uint64Value) }
+        else { return [] }
+        return displays.compactMap { display in
+            guard let id = display["Display Identifier"] as? String,
+                  let current = (display["Current Space"] as? [String: Any])?["id64"] as? NSNumber
+            else { return nil }
+            var desktops: [UInt64] = [], fullscreen = Set<UInt64>()
+            for space in display["Spaces"] as? [[String: Any]] ?? [] {
+                guard let spaceID = space["id64"] as? NSNumber, let type = space["type"] as? NSNumber else { continue }
+                if type.intValue == 0 { desktops.append(spaceID.uint64Value) }
+                else { fullscreen.insert(spaceID.uint64Value) }
             }
+            return DisplaySpaces(id: id, current: current.uint64Value, desktops: desktops, fullscreen: fullscreen)
         }
-        return (current, fullscreen)
     }
 
     /// AX elements for windows on other Spaces, which kAXWindowsAttribute does not return.
@@ -57,16 +63,12 @@ enum Private {
     static func remoteWindowElements(pid: pid_t, wanted: Set<CGWindowID>) -> [CGWindowID: AXUIElement] {
         guard let createRemote, !wanted.isEmpty else { return [:] }
         var found: [CGWindowID: AXUIElement] = [:]
-        // shortcut: element ids ≥ 1000 (windows opened late in a long-lived app) are missed; raise the cap if users report it.
-        for elementID in UInt64(0)..<1000 where found.count < wanted.count {
-            var token = Data(count: 20)
-            token.withUnsafeMutableBytes { p in
-                p.storeBytes(of: pid, toByteOffset: 0, as: Int32.self)
-                p.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
-                p.storeBytes(of: Int32(0x636f636f), toByteOffset: 8, as: Int32.self)  // "coco"
-                p.storeBytes(of: elementID, toByteOffset: 12, as: UInt64.self)
-            }
-            guard let el = createRemote(token as CFData)?.takeRetainedValue() else { continue }
+        // The 64-bit element ID starts at byte 12. Two 32-bit words keep every field naturally aligned.
+        var token = (UInt32(bitPattern: pid), UInt32(0), UInt32(0x636f636f), UInt32(0), UInt32(0))
+        for elementID in UInt32(0)..<1000 where found.count < wanted.count {
+            token.3 = elementID
+            let data = withUnsafeBytes(of: &token) { Data($0) }
+            guard let el = createRemote(data as CFData)?.takeRetainedValue() else { continue }
             var role: AnyObject?
             let err = AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
             if err == .cannotComplete { break }  // app is not answering; don't wait 0.1 s × 1000

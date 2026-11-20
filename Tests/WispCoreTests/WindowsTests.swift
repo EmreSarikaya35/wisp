@@ -67,15 +67,23 @@ private func w(_ id: UInt32, pid: Int32 = 10, layer: Int = 0, size: CGSize = CGS
     #expect(out.first?.isHidden == false)
 }
 
-@Test func fullscreenSpacesCountAsCurrentDesktop() {
-    let normal: Set<UInt64> = [1], other: Set<UInt64> = [2], full: Set<UInt64> = [9]
-    // On the normal desktop: fullscreen apps are listed, other normal desktops are not.
-    #expect(onCurrentDesktop(windowSpaces: full, current: normal, fullscreen: full))
-    #expect(!onCurrentDesktop(windowSpaces: other, current: normal, fullscreen: full))
-    // Inside a fullscreen app: the desktop behind it is listed too.
-    #expect(onCurrentDesktop(windowSpaces: normal, current: full, fullscreen: full))
-    // Helper windows that belong to no Space never count.
-    #expect(!onCurrentDesktop(windowSpaces: [], current: full, fullscreen: full))
+@Test func fullscreenKeepsOnlyTheLastDesktopPerDisplay() {
+    let secondary = DisplaySpaces(id: "secondary", current: 4, desktops: [3, 4], fullscreen: [8])
+    var history = DesktopHistory()
+    #expect(history.update([DisplaySpaces(id: "main", current: 2, desktops: [1, 2], fullscreen: [9]), secondary])
+            == [2, 4, 8, 9])
+    #expect(history.update([DisplaySpaces(id: "main", current: 9, desktops: [1, 2], fullscreen: [9]), secondary])
+            == [2, 4, 8, 9])
+    #expect(history.update([DisplaySpaces(id: "main", current: 9, desktops: [1], fullscreen: [9]), secondary])
+            == [1, 4, 8, 9])
+}
+
+@Test func firstWindowEntryWinsAndInactiveWindowsStayAtTheEnd() {
+    let input = [w(1), w(2), w(1, onScreen: false), w(3)]
+    let facts: [UInt32: AXFacts] = [1: AXFacts(title: nil, isMinimized: true)]
+    let out = buildList(cg: input, ax: facts, ownPID: 0, scope: .allSpaces)
+    #expect(out.map(\.id) == [2, 3, 1])
+    #expect(out.last?.isMinimized == true)
 }
 
 @Test func extraWindowsKeptInCurrentSpace() {

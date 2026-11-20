@@ -8,27 +8,32 @@ cd "$(dirname "$0")"
 CONFIG="${CONFIG:-release}"
 ARGS=(-c "$CONFIG")
 [ "$CONFIG" = release ] && ARGS+=(--arch arm64 --arch x86_64)
+if [ "${NOTARIZE:-0}" = "1" ]; then
+  : "${NOTARY_PROFILE:?set NOTARY_PROFILE (xcrun notarytool store-credentials)}"
+fi
 
 swift build "${ARGS[@]}"
-APP=build/Wisp.app
-rm -rf "$APP"
+mkdir -p build
+WORK=$(mktemp -d build/.wisp-build.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+STAGE="$WORK/dmg"
+APP="$STAGE/Wisp.app"
+DMG="$WORK/Wisp.dmg"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$(swift build "${ARGS[@]}" --show-bin-path)/Wisp" "$APP/Contents/MacOS/Wisp"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 codesign --force --options runtime --sign "${SIGN_ID:--}" "$APP"
 
 # DMG: the app plus an Applications link for drag-to-install.
-STAGE=build/dmg
-rm -rf "$STAGE" build/Wisp.dmg
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname Wisp -srcfolder "$STAGE" -format UDZO build/Wisp.dmg
-rm -rf "$STAGE"
+hdiutil create -quiet -volname Wisp -srcfolder "$STAGE" -format UDZO "$DMG"
 
 if [ "${NOTARIZE:-0}" = "1" ]; then
-  : "${NOTARY_PROFILE:?set NOTARY_PROFILE (xcrun notarytool store-credentials)}"
-  xcrun notarytool submit build/Wisp.dmg --keychain-profile "$NOTARY_PROFILE" --wait
-  xcrun stapler staple build/Wisp.dmg
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
 fi
-echo "built $APP and build/Wisp.dmg"
+
+rm -rf build/Wisp.app
+mv "$APP" build/Wisp.app
+mv -f "$DMG" build/Wisp.dmg
+echo "built build/Wisp.app and build/Wisp.dmg"

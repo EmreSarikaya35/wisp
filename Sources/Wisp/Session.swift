@@ -1,58 +1,63 @@
 import AppKit
 import WispCore
-#if DEBUG
-import os
-private let perf = Logger(subsystem: "io.github.emresarikaya35.wisp", category: "perf")
-#endif
 
-/// One switcher invocation: lives from the shortcut press until the modifier is released.
+/// One invocation, from the shortcut press to release, acceptance, or cancellation.
 @MainActor final class Session {
-    private let settings: Settings
+    private let scope: Scope
+    private let preferredMode: Mode
     private let modifier: CGEventFlags
-    private let panel: Panel
+    private let makePanel: () -> Panel
     private let onEnd: () -> Void
 
+    private var request: SnapshotRequest?
     private var snapshot: Snapshot?
     private var selection = Selection(count: 0)
+    private var pendingMoves: [KeyAction] = []
+    private var reverse = false
+    private var mode: Mode = .icons
+    private var screen: NSScreen?
+    private var screenSize: CGSize = .zero
+    private var layout: SwitcherLayout?
+
     private var tap: CFMachPort?
     private var tapSource: CFRunLoopSource?
     private var showWork: DispatchWorkItem?
-    private var shown = false
+    private var wantsPanel = false
+    private var renderScheduled = false
+    private var panel: Panel?
     private var capture: Task<Void, Never>?
     private var modifierWatch: Timer?
     private var ended = false
 
-    init(settings: Settings, modifier: CGEventFlags, panel: Panel, onEnd: @escaping () -> Void) {
-        self.settings = settings
-        self.modifier = modifier
-        self.panel = panel
+    init(settings: Settings, shortcut: Shortcut, makePanel: @escaping () -> Panel, onEnd: @escaping () -> Void) {
+        scope = settings.scope
+        preferredMode = settings.mode
+        modifier = shortcut == .option ? .maskAlternate : .maskCommand
+        self.makePanel = makePanel
         self.onEnd = onEnd
     }
 
     func start(reverse: Bool) {
-        #if DEBUG
-        let t0 = DispatchTime.now()
-        defer { perf.info("snapshot \(ms(since: t0)) ms, \(self.snapshot?.windows.count ?? 0) windows") }
-        #endif
-        let snap = WindowSource.snapshot(scope: settings.scope)
-        guard !snap.windows.isEmpty else { return finish(activate: false) }
-        snapshot = snap
-        selection = Selection(count: snap.windows.count,
-                              frontmostListed: NSWorkspace.shared.frontmostApplication?.processIdentifier == snap.windows[0].pid)
-        if reverse { selection.set(snap.windows.count - 1) }
+        self.reverse = reverse
+        let mouse = NSEvent.mouseLocation
+        screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        screenSize = screen?.visibleFrame.size ?? CGSize(width: 1024, height: 768)
+        mode = effectiveMode(preferredMode, screenRecordingAllowed: preferredMode != .preview || Permissions.screenRecording)
 
-        guard installTap() else { return finish(activate: false) }
-        // The modifier may already be up if the press was very fast: treat it as a tap.
-        guard modifierHeld else { return finish(activate: true) }
-        // Backstop: a release that happens while the tap is being installed never reaches it, which left the
-        // panel stuck open. While the session lives, it only stays if the modifier is actually held.
+        let listening = installTap()
+        if !listening, modifierHeld { return finish(activate: false) }
+        request = WindowSource.request(scope: scope) { [weak self] in self?.receive($0) }
+        guard listening else { return finish(activate: true) }
+
+        // Carbon can deliver the shortcut after the modifier has already been released.
         let watch = Timer(timeInterval: 0.03, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkModifier() }
         }
-        RunLoop.main.add(watch, forMode: .common)  // keep firing during mouse/menu tracking
+        watch.tolerance = 0.005
+        RunLoop.main.add(watch, forMode: .common)
         modifierWatch = watch
 
-        let work = DispatchWorkItem { [weak self] in self?.showPanel() }
+        let work = DispatchWorkItem { [weak self] in self?.requestPanel() }
         showWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + tapThreshold, execute: work)
     }
@@ -60,57 +65,93 @@ private let perf = Logger(subsystem: "io.github.emresarikaya35.wisp", category: 
     private var modifierHeld: Bool { CGEventSource.flagsState(.combinedSessionState).contains(modifier) }
 
     private func checkModifier() {
-        guard !ended, !modifierHeld else { return }
-        log.info("session: modifier release missed by the tap, caught by watch")
-        finish(activate: true)
+        if !ended, !modifierHeld { finish(activate: true) }
     }
 
-    private func showPanel() {
-        guard !shown, !ended, let snap = snapshot else { return }
+    private func receive(_ snapshot: Snapshot) {
+        guard !ended else { return }
+        guard !snapshot.windows.isEmpty else { return finish(activate: false) }
+        self.snapshot = snapshot
+        let layout = SwitcherLayout(count: snapshot.windows.count, mode: mode, screenSize: screenSize)
+        self.layout = layout
+        selection = Self.initialSelection(snapshot, reverse: reverse, moves: pendingMoves, columns: layout.columns)
+        pendingMoves.removeAll()
+        if wantsPanel { scheduleRender() }
+    }
+
+    nonisolated private static func initialSelection(_ snapshot: Snapshot, reverse: Bool, moves: [KeyAction],
+                                                    columns: Int) -> Selection {
+        var selection = Selection(count: snapshot.windows.count, frontmostListed: snapshot.frontmostListed,
+                                  reverse: reverse)
+        for action in moves { selection.move(action, columns: columns) }
+        return selection
+    }
+
+    private func requestPanel() {
+        wantsPanel = true
+        if snapshot != nil { scheduleRender() }
+    }
+
+    private func scheduleRender() {
+        guard !renderScheduled else { return }
+        renderScheduled = true
+        DispatchQueue.main.async { [weak self] in self?.render() }
+    }
+
+    private func render() {
+        renderScheduled = false
+        guard !ended, let snapshot, let screen, let layout else { return }
         guard modifierHeld else { return finish(activate: true) }
-        shown = true
-        showWork?.cancel()
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
-        panel.onHover = { [weak self] i in self?.select(i) }
-        panel.onClick = { [weak self] i in self?.select(i); self?.finish(activate: true) }
-        let mode = effectiveMode(settings.mode, screenRecordingAllowed: Permissions.screenRecording)
-        #if DEBUG
-        let t0 = DispatchTime.now()
-        #endif
-        panel.show(items: snap.windows, icons: snap.icons, mode: mode, selected: selection.index, on: screen)
-        #if DEBUG
-        perf.info("panel shown \(ms(since: t0)) ms (\(mode.rawValue))")
-        #endif
-        guard mode == .preview else { return }
-        capture = Thumbnails.capture(ids: snap.windows.map(\.id), size: panel.thumbnailSize,
-                                     scale: screen.backingScaleFactor) { [weak self] i, img in
-            guard let self, !self.ended else { return }  // a late frame must not land in a later session's panel
-            self.panel.setThumbnail(img, at: i)
+        let panel = self.panel ?? makePanel()
+        let pageChanged: Bool
+        if self.panel != nil {
+            pageChanged = panel.select(selection.index)
+        } else {
+            self.panel = panel
+            panel.onHover = { [weak self] in self?.select($0) }
+            panel.onClick = { [weak self] index in
+                self?.select(index)
+                self?.finish(activate: true)
+            }
+            panel.show(windows: snapshot.windows, mode: mode, layout: layout, selected: selection.index, on: screen)
+            pageChanged = true
         }
-        #if DEBUG
-        let task = capture
-        Task { await task?.value; perf.info("thumbnails done \(ms(since: t0)) ms") }
-        #endif
+        guard mode == .preview, pageChanged else { return }
+        capture?.cancel()
+        let page = layout.page(containing: selection.index)
+        let indices = [selection.index] + page.filter { $0 != selection.index }
+        let targets = indices.compactMap { index -> (Int, UInt32)? in
+            let window = snapshot.windows[index]
+            return window.isMinimized || window.isHidden ? nil : (index, window.id)
+        }
+        let size = CGSize(width: 220 * layout.scale, height: 140 * layout.scale)
+        capture = Thumbnails.capture(targets: targets, size: size, scale: screen.backingScaleFactor) { [weak self] index, image in
+            guard let self, !ended else { return }
+            panel.setThumbnail(image, at: index)
+        }
     }
 
-    private func select(_ i: Int) {
-        selection.set(i)
-        panel.select(selection.index)
+    private func select(_ index: Int) {
+        selection.set(index)
+        scheduleRender()
     }
 
-    func step(forward: Bool) { move(forward) }
+    func step(forward: Bool) { move(forward ? .next : .previous) }
 
-    private func move(_ forward: Bool) {
-        if forward { selection.next() } else { selection.previous() }
-        if shown { panel.select(selection.index) } else { showPanel() }
+    func cancel() { finish(activate: false) }
+
+    private func move(_ action: KeyAction) {
+        if let layout { selection.move(action, columns: layout.columns) }
+        else { pendingMoves.append(action) }
+        requestPanel()
     }
 
     /// Returns true to swallow the event.
-    fileprivate func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
+    private func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            checkModifier()
             return false
         case .flagsChanged:
             if !event.flags.contains(modifier) { finish(activate: true) }
@@ -118,8 +159,10 @@ private let perf = Logger(subsystem: "io.github.emresarikaya35.wisp", category: 
         case .keyDown:
             switch keyAction(keyCode: Int(event.getIntegerValueField(.keyboardEventKeycode)),
                              shift: event.flags.contains(.maskShift)) {
-            case .next: move(true)
-            case .previous: move(false)
+            case .next: move(.next)
+            case .previous: move(.previous)
+            case .up: move(.up)
+            case .down: move(.down)
             case .accept: finish(activate: true)
             case .cancel: finish(activate: false)
             case .swallow: break
@@ -153,28 +196,26 @@ private let perf = Logger(subsystem: "io.github.emresarikaya35.wisp", category: 
         ended = true
         showWork?.cancel()
         modifierWatch?.invalidate()
-        modifierWatch = nil
         capture?.cancel()
-        capture = nil
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
         }
         if let tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), tapSource, .commonModes) }
-        tap = nil
-        tapSource = nil
-        if shown { panel.hide() }
-        panel.onHover = nil
-        panel.onClick = nil
-        if activate, let snap = snapshot, snap.windows.indices.contains(selection.index) {
-            let w = snap.windows[selection.index]
-            Activator.activate(w, element: snap.elements[w.id])
+        panel?.hide()
+        panel?.onHover = nil
+        panel?.onClick = nil
+        if activate {
+            if snapshot != nil {
+                request?.activate { [index = selection.index] _ in index }
+            } else {
+                request?.activate { [reverse, pendingMoves, mode, screenSize] snapshot in
+                    let layout = SwitcherLayout(count: snapshot.windows.count, mode: mode, screenSize: screenSize)
+                    return Self.initialSelection(snapshot, reverse: reverse, moves: pendingMoves, columns: layout.columns).index
+                }
+            }
         }
-        snapshot = nil
+        request = nil
         onEnd()
     }
 }
-
-#if DEBUG
-private func ms(since t: DispatchTime) -> Int { Int((DispatchTime.now().uptimeNanoseconds - t.uptimeNanoseconds) / 1_000_000) }
-#endif

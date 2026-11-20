@@ -44,11 +44,27 @@ import Testing
     #expect(Selection(count: 5, frontmostListed: true).index == 1)
 }
 
+@Test func selectionSupportsReverseAndVerticalMovement() {
+    var selection = Selection(count: 7, reverse: true)
+    #expect(selection.index == 6)
+    selection.move(.down, columns: 3)
+    #expect(selection.index == 0)
+    selection.set(2)
+    selection.move(.down, columns: 3)
+    #expect(selection.index == 5)
+    selection.move(.down, columns: 3)
+    #expect(selection.index == 6)
+    selection.move(.up, columns: 3)
+    #expect(selection.index == 3)
+}
+
 @Test func keyActionsWhileSwitcherOpen() {
     #expect(keyAction(keyCode: 48, shift: false) == .next)       // Tab
     #expect(keyAction(keyCode: 48, shift: true) == .previous)    // Shift+Tab
     #expect(keyAction(keyCode: 124, shift: false) == .next)      // →
     #expect(keyAction(keyCode: 123, shift: false) == .previous)  // ←
+    #expect(keyAction(keyCode: 126, shift: false) == .up)        // ↑
+    #expect(keyAction(keyCode: 125, shift: false) == .down)      // ↓
     #expect(keyAction(keyCode: 36, shift: false) == .accept)     // Return
     #expect(keyAction(keyCode: 53, shift: false) == .cancel)     // Esc
     #expect(keyAction(keyCode: 12, shift: false) == .swallow)    // Q: Cmd+Q must not reach the app behind

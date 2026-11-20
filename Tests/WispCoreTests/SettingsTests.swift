@@ -9,18 +9,18 @@ private func fresh() -> UserDefaults { UserDefaults(suiteName: UUID().uuidString
     #expect(s.shortcut == .option)
     #expect(s.mode == .preview)
     #expect(s.scope == .currentSpace)
-    #expect(s.launchAtLogin == false)
 }
 
 @Test func roundTrips() {
     let d = fresh()
     let s = Settings(defaults: d)
-    s.shortcut = .command; s.mode = .icons; s.scope = .allSpaces; s.launchAtLogin = true
+    s.shortcut = .command
+    s.mode = .list
+    s.scope = .allSpaces
     let r = Settings(defaults: d)
     #expect(r.shortcut == .command)
-    #expect(r.mode == .icons)
+    #expect(r.mode == .list)
     #expect(r.scope == .allSpaces)
-    #expect(r.launchAtLogin == true)
 }
 
 @Test func invalidRawFallsBack() {
@@ -33,4 +33,5 @@ private func fresh() -> UserDefaults { UserDefaults(suiteName: UUID().uuidString
     #expect(effectiveMode(.preview, screenRecordingAllowed: false) == .icons)
     #expect(effectiveMode(.preview, screenRecordingAllowed: true) == .preview)
     #expect(effectiveMode(.icons, screenRecordingAllowed: true) == .icons)
+    #expect(effectiveMode(.list, screenRecordingAllowed: false) == .list)
 }
