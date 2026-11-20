@@ -88,10 +88,7 @@ enum WindowSource {
                 }
                 if windows.isEmpty || identifiedWindow { axAnswered.insert(pid) }
 
-                if pid == frontPID, let value = attribute(appElement, kAXFocusedWindowAttribute),
-                   CFGetTypeID(value) == AXUIElementGetTypeID() {
-                    focusedID = Private.windowID(of: value as! AXUIElement)
-                }
+                if pid == frontPID { focusedID = focusedWindowID(in: appElement) }
             }
         }
 
@@ -137,6 +134,17 @@ enum WindowSource {
             return AXFacts(title: nil, isMinimized: false, isHidden: hidden)
         }
         return AXFacts(title: attributes[0] as? String, isMinimized: attributes[1] as? Bool ?? false, isHidden: hidden)
+    }
+
+    static func focusedWindowID(in app: AXUIElement) -> CGWindowID? {
+        guard let value = attribute(app, kAXFocusedWindowAttribute),
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return Private.windowID(of: value as! AXUIElement)
+    }
+
+    static func windowElement(withID id: CGWindowID, in app: AXUIElement) -> AXUIElement? {
+        let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement]
+        return windows?.first { Private.windowID(of: $0) == id }
     }
 
     private static func attribute(_ el: AXUIElement, _ name: String) -> AnyObject? {
