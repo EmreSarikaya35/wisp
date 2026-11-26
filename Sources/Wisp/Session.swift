@@ -5,6 +5,7 @@ import WispCore
 @MainActor final class Session {
     private let scope: Scope
     private let preferredMode: Mode
+    private let glass: Bool
     private let modifier: CGEventFlags
     private let makePanel: () -> Panel
     private let onEnd: () -> Void
@@ -32,6 +33,7 @@ import WispCore
     init(settings: Settings, shortcut: Shortcut, makePanel: @escaping () -> Panel, onEnd: @escaping () -> Void) {
         scope = settings.scope
         preferredMode = settings.mode
+        glass = settings.liquidGlass
         modifier = shortcut == .option ? .maskAlternate : .maskCommand
         self.makePanel = makePanel
         self.onEnd = onEnd
@@ -113,7 +115,8 @@ import WispCore
                 self?.select(index)
                 self?.finish(activate: true)
             }
-            panel.show(windows: snapshot.windows, mode: mode, layout: layout, selected: selection.index, on: screen)
+            panel.show(windows: snapshot.windows, mode: mode, layout: layout, selected: selection.index,
+                       glass: glass, on: screen)
             pageChanged = true
         }
         guard mode == .preview, pageChanged else { return }

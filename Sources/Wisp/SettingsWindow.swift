@@ -13,7 +13,8 @@ import ServiceManagement
     private let mode = NSPopUpButton()
     private let scope = NSPopUpButton()
     private let login = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    private let displayModes: [Mode] = [.preview, .icons, .list]
+    private let glass = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let displayModes: [Mode] = [.preview, .icons, .list, .macOS]
 
     init(settings: Settings, applyShortcut: @escaping (Shortcut) -> Bool, onClose: @escaping () -> Void) {
         self.settings = settings
@@ -32,7 +33,7 @@ import ServiceManagement
     private func build() {
         shortcut.addItems(withTitles: ["Option+Tab", "Cmd+Tab"])
         shortcut.selectItem(at: settings.shortcut == .option ? 0 : 1)
-        mode.addItems(withTitles: ["Window previews", "App icons only", "Compact list"])
+        mode.addItems(withTitles: ["Window previews", "App icons only", "Compact list", "macOS style"])
         mode.selectItem(at: displayModes.firstIndex(of: settings.mode) ?? 0)
         scope.addItems(withTitles: ["Current desktop", "All desktops"])
         scope.selectItem(at: settings.scope == .currentSpace ? 0 : 1)
@@ -42,13 +43,17 @@ import ServiceManagement
             scope.item(at: 1)?.title = "All desktops (not supported on this macOS)"
             scope.selectItem(at: 0)
         }
-        for c in [shortcut, mode, scope, login] as [NSControl] {
+        glass.state = settings.liquidGlass ? .on : .off
+        // Real Liquid Glass needs macOS 26; older systems get a plain see-through panel instead.
+        if !Backdrop.glassAvailable { glass.title = "Simplified before macOS 26" }
+        for c in [shortcut, mode, glass, scope, login] as [NSControl] {
             c.target = self
             c.action = #selector(changed(_:))
         }
 
         shortcut.setAccessibilityLabel("Shortcut")
         mode.setAccessibilityLabel("Show")
+        glass.setAccessibilityLabel("Liquid Glass")
         scope.setAccessibilityLabel("Windows from")
         login.setAccessibilityLabel("Launch at login")
         let screenRecording = statusRow("Previews need Screen Recording permission", button: "Grant…",
@@ -59,6 +64,7 @@ import ServiceManagement
             [label("Shortcut"), shortcut],
             [label("Show"), mode],
             [NSGridCell.emptyContentView, screenRecording],
+            [label("Liquid Glass"), glass],
             [label("Windows from"), scope],
             [label("Launch at login"), login],
             [NSGridCell.emptyContentView, loginApproval],
@@ -105,7 +111,7 @@ import ServiceManagement
         let status = SMAppService.mainApp.status
         login.state = status == .enabled || status == .requiresApproval ? .on : .off
         form?.row(at: 2).isHidden = settings.mode != .preview || Permissions.screenRecording
-        form?.row(at: 5).isHidden = status != .requiresApproval
+        form?.row(at: 6).isHidden = status != .requiresApproval
         if let content = window?.contentView { window?.setContentSize(content.fittingSize) }
     }
 
@@ -120,6 +126,7 @@ import ServiceManagement
         case mode:
             if displayModes.indices.contains(mode.indexOfSelectedItem) { settings.mode = displayModes[mode.indexOfSelectedItem] }
             refreshStatus()
+        case glass: settings.liquidGlass = glass.state == .on
         case scope: settings.scope = scope.indexOfSelectedItem == 0 ? .currentSpace : .allSpaces
         case login: setLaunchAtLogin(login.state == .on)
         default: break

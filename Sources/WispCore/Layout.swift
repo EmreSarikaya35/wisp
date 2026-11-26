@@ -32,29 +32,45 @@ public func gridLayout(count: Int, item: CGSize, spacing: CGFloat, maxSize: CGSi
 public struct SwitcherLayout: Sendable {
     public static let padding: CGFloat = 16
     public static let spacing: CGFloat = 8
+    /// Lower bound for the icon scale of the macOS style before it starts paging.
+    public static let macOSMinimumScale: CGFloat = 0.5
 
     public let columns: Int
     public let pageSize: Int
     public let itemSize: CGSize
     public let scale: CGFloat
+    /// Gap between items.
+    public let spacing: CGFloat
+    /// Space between the panel edge and the items (width: left/right, height: top/bottom).
+    public let inset: CGSize
     private let count: Int
 
     public init(count: Int, mode: Mode, screenSize: CGSize) {
         self.count = count
-        let available = CGSize(width: max(1, screenSize.width * 0.9 - 2 * Self.padding),
-                               height: max(1, screenSize.height * 0.9 - 2 * Self.padding))
+        let macOS = mode == .macOS
+        // macOS style: 128 pt icons on a 134 pt pitch, measured from the system app switcher.
+        let spacing: CGFloat = macOS ? 6 : Self.spacing
+        let inset = macOS ? CGSize(width: 23, height: 23) : CGSize(width: Self.padding, height: Self.padding)
+        self.spacing = spacing
+        self.inset = inset
+        var available = CGSize(width: max(1, screenSize.width * 0.9 - 2 * inset.width),
+                               height: max(1, screenSize.height * 0.9 - 2 * inset.height))
         let item: CGSize = switch mode {
         case .preview: CGSize(width: 236, height: 180)
         case .icons: CGSize(width: 96, height: 96)
         case .list: CGSize(width: min(380, available.width), height: 44)
+        case .macOS: CGSize(width: 128, height: 128)
         }
-        let minimumScale = min(0.75, available.width / item.width, available.height / item.height)
-        let fitted = gridLayout(count: count, item: item, spacing: Self.spacing, maxSize: available)
+        // The macOS style is always a single row: icons shrink to fit the width, then it pages.
+        if macOS { available.height = min(available.height, item.height) }
+        let floor: CGFloat = macOS ? Self.macOSMinimumScale : 0.75
+        let minimumScale = min(floor, available.width / item.width, available.height / item.height)
+        let fitted = gridLayout(count: count, item: item, spacing: spacing, maxSize: available)
         scale = mode == .list ? min(1, available.height / item.height) : max(minimumScale, fitted.scale)
         itemSize = CGSize(width: item.width * scale, height: item.height * scale)
-        let cols = Int((available.width + Self.spacing) / (itemSize.width + Self.spacing))
+        let cols = Int((available.width + spacing) / (itemSize.width + spacing))
         columns = mode == .list ? 1 : max(1, min(count, cols))
-        let rows = Int((available.height + Self.spacing) / (itemSize.height + Self.spacing))
+        let rows = macOS ? 1 : Int((available.height + spacing) / (itemSize.height + spacing))
         pageSize = columns * max(1, rows)
     }
 

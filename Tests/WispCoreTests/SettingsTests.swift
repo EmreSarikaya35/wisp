@@ -9,6 +9,19 @@ private func fresh() -> UserDefaults { UserDefaults(suiteName: UUID().uuidString
     #expect(s.shortcut == .option)
     #expect(s.mode == .preview)
     #expect(s.scope == .currentSpace)
+    #expect(s.liquidGlass == false)
+}
+
+@Test func macOSStyleAndLiquidGlassRoundTrip() {
+    let d = fresh()
+    let s = Settings(defaults: d)
+    s.mode = .macOS
+    s.liquidGlass = true
+    #expect(d.string(forKey: "mode") == "macos")
+    let r = Settings(defaults: d)
+    #expect(r.mode == .macOS)
+    #expect(r.liquidGlass)
+    #expect(effectiveMode(.macOS, screenRecordingAllowed: false) == .macOS)
 }
 
 @Test func roundTrips() {

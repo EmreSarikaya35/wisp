@@ -47,3 +47,28 @@ private let item = CGSize(width: 200, height: 150)
     #expect(layout.itemSize.height == 44)
     #expect(layout.pageCount > 1)
 }
+
+@Test func macOSStyleIsOneRowOfFullSizeIconsWhenTheyFit() {
+    let layout = SwitcherLayout(count: 5, mode: .macOS, screenSize: CGSize(width: 1470, height: 956))
+    #expect(layout.scale == 1)
+    #expect(layout.columns == 5)
+    #expect(layout.pageSize == 5)
+    #expect(layout.itemSize == CGSize(width: 128, height: 128))
+    // 5 icons on a 134 pt pitch plus the side insets: the 710 pt wide system panel.
+    let width = CGFloat(layout.columns) * (layout.itemSize.width + layout.spacing) - layout.spacing
+    #expect(width + 2 * layout.inset.width == 710)
+}
+
+@Test func macOSStyleShrinksThenPagesButStaysOneRow() {
+    let screen = CGSize(width: 1470, height: 956)
+    let some = SwitcherLayout(count: 14, mode: .macOS, screenSize: screen)
+    #expect(some.scale < 1)
+    #expect(some.columns == 14)
+    #expect(some.pageCount == 1)
+    let many = SwitcherLayout(count: 80, mode: .macOS, screenSize: screen)
+    #expect(many.scale >= SwitcherLayout.macOSMinimumScale)
+    #expect(many.pageSize == many.columns)
+    #expect(many.pageCount > 1)
+    let width = CGFloat(many.columns) * (many.itemSize.width + many.spacing) - many.spacing
+    #expect(width + 2 * many.inset.width <= screen.width * 0.9)
+}
